@@ -1,0 +1,85 @@
+- name: Ensure that k8s master is well configured
+  hosts: all
+  gather_facts: True
+  tasks:
+   - name: Install k8s repo
+     template:
+       src: kubernetes.repo
+       dest: /etc/yum.repos.d/
+
+   - name: Install required packages
+     yum:
+       name: ['docker', 'kubectl', 'kubelet', 'kubeadm', 'etcd']
+       state: present
+
+   - name: Ensure that required services are started
+     service:
+        name: "{{ item }}"
+        state: started
+     with_items:
+        - docker
+        - firewalld
+        - kubelet
+
+   - name: open FW ports
+     firewalld:
+       port: "{{ item }}"
+       permanent: yes
+       immediate: yes
+       state: enabled
+     with_items:
+       - 6443/tcp
+       - 10250/tcp 
+
+   - name: Disable SELinux
+     selinux:
+       state: disabled
+
+#   - name: Reboot machine to disable SELinux
+#     reboot:
+#       reboot_timeout: 45
+#
+   - name: Disable SWAP in fstab since kubernetes can't work with swap enabled (2/2)
+     replace:
+       path: /etc/fstab
+       regexp: '^([^#].*?\sswap\s+swap\s+.*)$'
+       replace: '# \1'
+
+   - name: Copy k8s sysctl config
+     template:
+       src: k8s.conf
+       dest: /etc/sysctl.d/
+     register: sysctl
+
+   - name: Apply sysctl conf
+     sysctl:
+       name: net.bridge.bridge-nf-call-ip6tables
+       value: '1'
+       reload: yes
+     when: sysctl is changed
+
+   - name: K8s init
+     shell: kubeadm init --pod-network-cidr=10.244.0.0/16
+     when: inventory_hostname in groups['master']
+
+   - name: Create Kubernetes config directory
+     file:
+       path: ".kube/"
+       state: directory
+     when: inventory_hostname in groups['master']
+
+   - name: Copy admin.conf to Home directory
+     copy:
+       src: /etc/kubernetes/admin.conf
+       dest: "/root/.kube/config"
+       remote_src: true
+     when: inventory_hostname in groups['master']
+
+   - name: Generate new join token
+     shell: kubeadm token create --print-join-command
+     register: joincmd
+     when: inventory_hostname in groups['master']
+
+   - name: join k8s 
+     shell: "{{ joincmd }}"
+     when: inventory_hostname in groups['nodes']

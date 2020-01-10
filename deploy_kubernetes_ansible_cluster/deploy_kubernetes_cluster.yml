@@ -1,0 +1,44 @@
+- name: Ensure k8s master iw well configured
+  hosts: master
+  gather_facts: True
+  become: yes
+  tasks:
+    - name: Ensure that yum kubernetes repo is well present
+      template:
+        src: kubernetes.repo
+        dest: /etc/yum.repo.d
+
+    - name: Ensure that docker, kubelet, kubeadm, kubectl, etcd  are well installed
+      yum:
+        name: "{{ item }}"
+        state: present
+      with_items:
+        - docker
+        - kubelet
+        - kubeadm
+        - kubectl
+        - etcd
+
+    - name: Ensure that docker, kubelet, kubeadm, kubectl, etcd are well started
+      service:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      with_items:
+        - docker
+        - firewalld
+        - kubelet
+
+    - name: Ensure that the port 6443 and 10250 
+      firewalld:
+        port: "{{ item }}" 
+        permanent: true
+        immediate: yes
+        state: enabled
+      with_items:
+        - 6443/tcp
+        - 10250/tcp
+
+    - name: Disable SELinux
+      selinux:
+        state: disabled
